@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>カタカナ Flashcards</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f0f12;
+      color: #e8e8e8;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 20px;
+    }
+
+    header {
+      font-size: 12px;
+      letter-spacing: 0.25em;
+      color: #444;
+      text-transform: uppercase;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: #16161c;
+      border: 1px solid #252530;
+      border-radius: 20px;
+      padding: 44px 40px 36px;
+      width: 100%;
+      max-width: 480px;
+      text-align: center;
+      /* Stretch card to fill available viewport height */
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .progress-bar {
+      height: 3px;
+      background: #222230;
+      border-radius: 2px;
+      margin-bottom: 44px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #c0392b;
+      border-radius: 2px;
+      transition: width 0.5s ease;
+    }
+
+    .katakana-word {
+      font-size: clamp(20px, 13vw, 82px);
+      letter-spacing: 6px;
+      line-height: 1.15;
+      /* Fill all available space between progress bar and input */
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      /* Scale down to fit long words on one line */
+      white-space: nowrap;
+      overflow: hidden;
+      width: 100%;
+      font-size: clamp(20px, calc(70vw / var(--char-count, 4)), 82px);
+    }
+
+    #answer-input {
+      width: 100%;
+      font-size: 28px;
+      padding: 14px 16px;
+      background: #0f0f14;
+      border: 2px solid #2a2a38;
+      border-radius: 10px;
+      color: #fff;
+      text-align: center;
+      outline: none;
+      letter-spacing: 3px;
+      transition: border-color 0.2s, background 0.2s;
+      display: block;
+    }
+    #answer-input:focus { border-color: #4a4a68; }
+    #answer-input.correct   { border-color: #2e7d4f; background: #0d1a12; }
+    #answer-input.incorrect { border-color: #8b2020; background: #1a0d0d; }
+
+    .ime-hint {
+      font-size: 11px;
+      color: #383848;
+      margin-top: 8px;
+      min-height: 16px;
+    }
+
+    .feedback {
+      margin-top: 28px;
+      min-height: 96px;
+    }
+
+    .verdict {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .verdict.correct   { color: #4caf70; }
+    .verdict.incorrect { color: #e05050; }
+
+    .correction {
+      font-size: 26px;
+      letter-spacing: 4px;
+      color: #ccc;
+      margin-bottom: 10px;
+    }
+
+    .meaning { font-size: 19px; color: #aaa; }
+    .romaji  { font-size: 14px; color: #555; margin-top: 4px; }
+
+    .next-btn {
+      margin-top: 28px;
+      padding: 12px 44px;
+      background: #1e1e2a;
+      color: #bbb;
+      border: 1px solid #2a2a3a;
+      border-radius: 10px;
+      font-size: 15px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      letter-spacing: 0.04em;
+    }
+    .next-btn:hover, .next-btn:focus { background: #27273a; color: #eee; outline: none; }
+    .next-btn:disabled { opacity: 0.3; cursor: default; }
+
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      margin-top: 28px;
+      font-size: 11px;
+      color: #3a3a50;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .stat-val {
+      display: block;
+      font-size: 17px;
+      color: #777;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .done { text-align: center; padding: 8px 0; }
+    .done h2 { font-size: 28px; margin-bottom: 14px; }
+    .done p  { font-size: 14px; color: #555; margin-bottom: 6px; line-height: 1.7; }
+  </style>
+</head>
+<body>
+  <header>カタカナ Flashcards</header>
+  <div class="card" id="app"></div>
+
+  <script>
+  const WORDS = [
+    ["アメリカ","Amerika","America"],
+    ["コーヒー","kōhī","coffee"],
+    ["スポーツ","supōtsu","sports"],
+    ["テレビ","terebi","TV"],
+    ["パン","pan","bread"],
+    ["インターネット","intānetto","internet"],
+    ["メール","mēru","email"],
+    ["グラス","gurasu","glass"],
+    ["ビール","bīru","beer"],
+    ["チーズ","chīzu","cheese"],
+    ["スーパー","sūpā","supermarket"],
+    ["ピザ","piza","pizza"],
+    ["ケーキ","kēki","cake"],
+    ["チョコレート","chokorēto","chocolate"],
+    ["スマホ","sumaho","smartphone"],
+    ["カレー","karē","curry"],
+    ["ハンバーガー","hanbāgā","hamburger"],
+    ["キャンプ","kyanpu","camping"],
+    ["プール","pūru","pool"],
+    ["フライドポテト","furaido poteto","french fries"],
+    ["ドラマ","dorama","drama"],
+    ["サンドイッチ","sandoicchi","sandwich"],
+    ["サラダ","sarada","salad"],
+    ["デパート","depāto","department store"],
+    ["レストラン","resutoran","restaurant"],
+    ["シャンプー","shanpū","shampoo"],
+    ["バス","basu","bus"],
+    ["ホテル","hoteru","hotel"],
+    ["バナナ","banana","banana"],
+    ["タクシー","takushī","taxi"],
+    ["パーティー","pātī","party"],
+    ["インスタントラーメン","insutanto rāmen","instant noodles"],
+    ["マイカー","maikā","private car"],
+    ["ガム","gamu","gum"],
+    ["サッカー","sakkā","soccer"],
+    ["ダイエット","daietto","diet"],
+    ["ペン","pen","pen"],
+    ["ガス","gasu","gas"],
+    ["ストレス","sutoresu","stress"],
+    ["ショッピング","shoppingu","shopping"],
+    ["レモン","remon","lemon"],
+    ["オフィス","ofisu","office"],
+    ["ジュース","jūsu","juice"],
+    ["タバコ","tabako","tobacco"],
+    ["メガネ","megane","glasses"],
+    ["ジャケット","jaketto","jacket"],
+    ["パスポート","pasupōto","passport"],
+    ["カメラ","kamera","camera"],
+    ["スニーカー","sunīkā","sneakers"],
+    ["キャッシュカード","kyasshu kādo","cash card"],
+    ["ビジネス","bijinesu","business"],
+    ["セーター","seetaa","sweater"],
+    ["タイヤ","taiya","tire"],
+    ["クッキー","kukkii","cookie"],
+    ["ドライブ","doraibu","drive"],
+    ["メモ","memo","memo"],
+    ["オムレツ","omuretsu","omelet"],
+    ["プラネタリウム","puranetariumu","planetarium"],
+    ["パンツ","pantsu","pants"],
+    ["バター","bataa","butter"],
+    ["カプセル","kapuseru","capsule"],
+    ["フルーツ","furuutsu","fruit"],
+    ["カンニング","kanningu","cheating"],
+    ["レシート","reshiito","receipt"],
+    ["ポケット","poketto","pocket"],
+    ["シャワー","shawaa","shower"],
+    ["ショートケーキ","shootokeeki","shortcake"],
+    ["メガネケース","meganekeesu","glasses case"],
+    ["バイト","baito","part-time job"],
+    ["ブラシ","burashi","brush"],
+    ["ソフトウェア","sofutowea","software"],
+    ["タイムリミット","taimurimitto","time limit"],
+    ["ファイル","fairu","file"],
+    ["ボタン","botan","button"],
+    ["リュックサック","ryukkusakku","backpack"],
+    ["バイク","baiku","motorcycle"],
+    ["グローブ","guroobu","gloves"],
+    ["サングラス","sangurasu","sunglasses"],
+    ["ペットボトル","pettobotoru","plastic bottle"],
+    ["ファストフード","fasutofuudo","fast food"],
+    ["セロテープ","seroteepu","scotch tape"],
+    ["シートベルト","shiitoberuto","seat belt"],
+    ["ソファー","sofaa","sofa"],
+    ["テニス","tenisu","tennis"],
+    ["バレーボール","bareebooru","volleyball"],
+    ["マフラー","mafuraa","scarf"],
+    ["レバー","rebaa","lever"],
+    ["クレジットカード","kurejitto kaado","credit card"],
+    ["ディスカウントストア","disukaunto sutoa","discount store"],
+    ["ドレス","doresu","dress"],
+    ["ファッション","fasshon","fashion"],
+    ["バッグ","baggu","bag"],
+    ["ホームステイ","homusutei","homestay"],
+    ["ラジオ","rajio","radio"],
+    ["リモコン","rimokon","remote control"],
+    ["サービス","saabisu","service"],
+    ["ジャンプ","janpu","jump"],
+    ["タオル","taoru","towel"],
+    ["ティッシュ","tisshu","tissue"],
+    ["デザート","dezaato","dessert"],
+    ["ハンカチ","hankachi","handkerchief"],
+    ["ファン","fan","fan"],
+    ["プログラム","puroguramu","program"],
+    ["プロジェクター","purojekutaa","projector"],
+    ["ボールペン","boorupen","ballpoint pen"],
+    ["ラップトップ","raptoppu","laptop"],
+    ["リンゴ","ringo","apple"],
+    ["ロゴ","rogo","logo"],
+    ["アニメ","anime","anime"],
+    ["エレベーター","erebeetaa","elevator"],
+    ["キッチン","kicchin","kitchen"],
+    ["クリーニング","kuriiningu","dry cleaning"],
+    ["ショー","shoo","show"],
+    ["ストック","sutokku","stock"],
+    ["チャンネル","channeru","channel"],
+    ["デート","deeto","date"],
+    ["バイタル","baitaru","vital"],
+    ["フロント","furonto","front"],
+    ["ベルト","beruto","belt"],
+    ["マッサージ","massaji","massage"],
+    ["メンバー","menbaa","member"],
+    ["ユニット","yunitto","unit"],
+    ["ライブ","raibu","live"],
+    ["レビュー","rebyuu","review"],
+    ["ロープ","roopu","rope"],
+    ["ウイスキー","uisukii","whiskey"],
+    ["カーテン","kaaten","curtain"],
+    ["キャップ","kyappu","cap"],
+    ["グリル","guriru","grill"],
+    ["コンピューター","konpyuutaa","computer"],
+    ["シューズ","shuuzu","shoes"],
+    ["スキー","sukii","ski"],
+    ["スタンド","sutando","stand"],
+    ["ダンス","dansu","dance"],
+    ["チャージ","chaaji","charge"],
+    ["テスト","tesuto","test"],
+    ["フレーム","fureemu","frame"],
+    ["ペーパー","peepaa","paper"],
+    ["ホース","hoosu","hose"],
+    ["メモリー","memorii","memory"],
+    ["リサイクル","risaikuru","recycling"],
+    ["ワイン","wain","wine"],
+    ["アルコール","arukooru","alcohol"],
+    ["オートバイ","ootobai","motorbike"],
+    ["クリーム","kuriimu","cream"],
+    ["コピー","kopii","copy"],
+    ["スーパーマーケット","suupaa maaketto","supermarket"],
+    ["プラスチック","purasuchikku","plastic"],
+    ["プラン","puran","plan"],
+    ["ブログ","burogu","blog"],
+    ["マーケティング","maaketingu","marketing"],
+    ["ミュージック","myuujikku","music"],
+    ["レクリエーション","Rekurieshon","recreation"],
+    ["レポート","Repōto","report"],
+    ["ロボット","Robotto","robot"],
+    ["アイデア","Aidea","idea"],
+    ["アルバイト","Arubaito","part-time job"],
+    ["ウォーター","Wōtā","water"],
+    ["カレンダー","Karendā","calendar"],
+    ["クリスマス","Kurisumasu","Christmas"],
+    ["コンサート","Konsāto","concert"],
+    ["シンプル","Shinpuru","simple"],
+    ["スケジュール","Sukejūru","schedule"],
+    ["タブレット","Taburetto","tablet"],
+    ["ディナー","Dinā","dinner"],
+    ["ニュース","Nyūsu","news"],
+    ["ネットワーク","Nettowāku","network"],
+    ["バーゲン","Bāgen","bargain"],
+    ["ファッションショー","Fasshon shō","fashion show"],
+    ["マイク","Maiku","microphone"],
+    ["ムービー","Mūbī","movie"],
+    ["リサーチ","Risāchi","research"],
+    ["レストランチェーン","Resutoran chēn","restaurant chain"],
+    ["ワイヤー","Waiyā","wire"],
+    ["アパート","Apāto","apartment"],
+    ["アプリ","Apuri","app"],
+    ["イベント","Ibento","event"],
+    ["ウイルス","Uirusu","virus"],
+    ["オーディション","Ōdishon","audition"],
+    ["カード","Kādo","card"],
+    ["キーワード","Kīwādo","keyword"],
+    ["コース","Kōsu","course"],
+    ["シーズン","Shīzun","season"],
+    ["スタジオ","Sutajio","studio"],
+    ["テント","Tento","tent"],
+    ["ドキュメント","Dokyumento","document"],
+    ["ニューヨーク","Nyū Yōku","New York"],
+    ["ノート","Nōto","notebook"],
+    ["パートナー","Pātonā","partner"],
+    ["パブ","Pabu","pub"],
+    ["ビデオ","Bideo","video"],
+    ["ピアノ","Piano","piano"],
+    ["フォント","Fonto","font"],
+    ["ブロック","Burokku","block"],
+    ["プロモーション","Puromōshon","promotion"],
+    ["マンション","manshon","apartment building"],
+    ["ランドリー","randorii","laundry"],
+    ["レベル","reberu","level"],
+    ["レンズ","renzu","lens"],
+    ["アジア","Ajia","Asia"],
+    ["アドバイス","adobaisu","advice"],
+    ["アマチュア","amachua","amateur"],
+    ["アルバム","arubamu","album"],
+    ["エキサイト","ekisaito","excite"],
+    ["エスカレーター","esukaretaa","escalator"],
+    ["エディター","editaa","editor"],
+    ["オーダー","oodaa","order"],
+    ["カジュアル","kajuaru","casual"],
+    ["カタログ","katarogu","catalog"],
+    ["キャンバス","kyanbasu","canvas"],
+    ["クリニック","kurinikku","clinic"],
+    ["ゲーム","geemu","game"],
+    ["コミュニケーション","komyunikeeshon","communication"],
+    ["サイズ","saizu","size"],
+    ["サイン","sain","sign"],
+    ["シェア","shea","share"],
+    ["シンボル","shinboru","symbol"],
+    ["スケート","sukeeto","skate"],
+    ["セール","seeru","sale"],
+    ["タイプ","taipu","type"],
+    ["テキスト","tekisuto","text"],
+    ["トイレ","toire","toilet"],
+    ["トランプ","toranpu","playing cards"],
+    ["ドル","doru","dollar"],
+    ["ネット","netto","net"],
+    ["ノーマル","noomaru","normal"],
+    ["マスター","masutaa","master"],
+  ];
+
+  // ── SM-2 spaced repetition ────────────────────────────────────
+  // Stores per-card state in localStorage keyed by katakana string.
+  // Card state: { interval (days), reps, ef (ease factor), due (epoch ms) }
+  const PFX = 'kf_';
+
+  function getCard(k) {
+    const d = localStorage.getItem(PFX + k);
+    return d ? JSON.parse(d) : { interval: 1, reps: 0, ef: 2.5, due: 0 };
+  }
+
+  function saveCard(k, d) {
+    localStorage.setItem(PFX + k, JSON.stringify(d));
+  }
+
+  // quality: 5 = correct, 1 = incorrect
+  function sm2(card, correct) {
+    const q = correct ? 5 : 1;
+    let { interval, reps, ef } = card;
+    if (q >= 3) {
+      if      (reps === 0) interval = 1;
+      else if (reps === 1) interval = 6;
+      else                 interval = Math.round(interval * ef);
+      reps++;
+    } else {
+      reps = 0;
+      interval = 1;
+    }
+    ef = Math.max(1.3, ef + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02));
+    ef = Math.round(ef * 1000) / 1000;
+    return { interval, reps, ef, due: Date.now() + interval * 86400000 };
+  }
+
+  // ── Session queue ─────────────────────────────────────────────
+  // Each session: all due reviews + up to MAX_NEW new cards.
+  const MAX_NEW = 20;
+
+  function buildQueue() {
+    const now = Date.now(), due = [], fresh = [];
+    for (const w of WORDS) {
+      const c = getCard(w[0]);
+      if (c.reps === 0)       fresh.push(w);
+      else if (c.due <= now)  due.push([w, c.due]);
+    }
+    due.sort((a, b) => a[1] - b[1]);
+    return [...due.map(d => d[0]), ...fresh.slice(0, MAX_NEW)];
+  }
+
+  // ── App state ─────────────────────────────────────────────────
+  let queue, current, sessCorrect, sessTotal, initialLen, doneSeen, keyHandler;
+
+  function startSession() {
+    queue       = buildQueue();
+    initialLen  = queue.length;
+    doneSeen    = new Set();
+    sessCorrect = 0;
+    sessTotal   = 0;
+    keyHandler  = null;
+    advance();
+  }
+
+  function advance() {
+    if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null; }
+    if (queue.length === 0) { renderDone(); return; }
+    current = queue.shift();
+    renderQuestion();
+  }
+
+  function submit(typed) {
+    if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null; }
+    const correct = typed === current[0];
+    sessTotal++;
+    if (correct) { sessCorrect++; doneSeen.add(current[0]); }
+    saveCard(current[0], sm2(getCard(current[0]), correct));
+    if (!correct) queue.push(current);  // re-queue within this session
+    renderFeedback(typed, correct);
+  }
+
+  // ── Render ────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function progressPct() {
+    return initialLen > 0 ? Math.min(100, doneSeen.size / initialLen * 100) : 0;
+  }
+
+  function statsHTML() {
+    const rem = initialLen - doneSeen.size;
+    const acc = sessTotal > 0 ? Math.round(sessCorrect / sessTotal * 100) + '%' : '—';
+    return `
+      <div class="stats">
+        <div><span class="stat-val">${rem}</span>remaining</div>
+        <div><span class="stat-val">${sessCorrect}/${sessTotal}</span>correct</div>
+        <div><span class="stat-val">${acc}</span>accuracy</div>
+      </div>`;
+  }
+
+  function renderQuestion() {
+    document.getElementById('app').innerHTML = `
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${progressPct()}%"></div>
+      </div>
+      <div class="katakana-word" style="--char-count:${current[0].length}">${esc(current[0])}</div>
+      <div class="feedback"></div>
+      <input id="answer-input" type="text" lang="ja"
+             inputmode="text"
+             autocomplete="off" autocorrect="off"
+             autocapitalize="off" spellcheck="false"
+             placeholder="カタカナ…" />
+      <p class="ime-hint">Switch your IME to カタカナ mode, then type</p>
+      <button class="next-btn" id="check-btn" disabled>Check ✓</button>
+      ${statsHTML()}
+    `;
+    const inp = document.getElementById('answer-input');
+    const btn = document.getElementById('check-btn');
+
+    function trySubmit() {
+      const val = inp.value.trim();
+      if (val) submit(val);
+    }
+
+    inp.addEventListener('input', () => {
+      btn.disabled = inp.value.trim().length === 0;
+    });
+
+    btn.addEventListener('click', trySubmit);
+
+    inp.focus();
+    keyHandler = e => {
+      if (e.key === 'Enter' && inp.value.trim()) trySubmit();
+    };
+    document.addEventListener('keydown', keyHandler);
+  }
+
+  function renderFeedback(typed, correct) {
+    document.getElementById('app').innerHTML = `
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${progressPct()}%"></div>
+      </div>
+      <div class="katakana-word" style="--char-count:${current[0].length}">${esc(current[0])}</div>
+      <div class="feedback">
+        <div class="verdict ${correct ? 'correct' : 'incorrect'}">
+          ${correct ? '✓ Correct' : '✗ Incorrect'}
+        </div>
+        ${!correct ? `<div class="correction">${esc(current[0])}</div>` : ''}
+        <div class="meaning">${esc(current[2])}</div>
+        <div class="romaji">${esc(current[1])}</div>
+      </div>
+      <input id="answer-input" type="text"
+             class="${correct ? 'correct' : 'incorrect'}"
+             readonly />
+      <p class="ime-hint">&nbsp;</p>
+      <button class="next-btn" id="next-btn">Next →</button>
+      ${statsHTML()}
+    `;
+    // Set value via JS property to avoid any injection risk
+    document.getElementById('answer-input').value = typed;
+    const btn = document.getElementById('next-btn');
+    keyHandler = e => { if (e.key === 'Enter') advance(); };
+    document.addEventListener('keydown', keyHandler);
+    // Delay click listener to avoid iOS ghost-click: the same touch that
+    // triggered "Check" can fire a synthetic click on the newly rendered
+    // "Next" button if it appears under the finger.
+    setTimeout(() => btn.addEventListener('click', advance), 350);
+  }
+
+  function renderDone() {
+    const acc = sessTotal ? Math.round(sessCorrect / sessTotal * 100) : 0;
+    let nextDue = Infinity;
+    for (const w of WORDS) {
+      const c = getCard(w[0]);
+      if (c.reps > 0 && c.due > Date.now()) nextDue = Math.min(nextDue, c.due);
+    }
+    const nextStr = nextDue === Infinity
+      ? 'none scheduled yet'
+      : new Date(nextDue).toLocaleString(undefined, {
+          weekday: 'short', month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit'
+        });
+    const freshCount = WORDS.filter(w => getCard(w[0]).reps === 0).length;
+
+    document.getElementById('app').innerHTML = `
+      <div class="done">
+        <h2>Session complete</h2>
+        <p>${sessTotal} cards reviewed &middot; ${acc}% accuracy</p>
+        <p>Next review due: ${nextStr}</p>
+        ${freshCount > 0
+          ? `<button class="next-btn" id="more-btn" style="margin-top:20px">
+               Study ${Math.min(freshCount, MAX_NEW)} more new cards
+             </button>`
+          : `<p style="margin-top:16px;color:#333">All cards introduced — check back for reviews.</p>`
+        }
+      </div>
+    `;
+    const btn = document.getElementById('more-btn');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        sessCorrect = 0; sessTotal = 0;
+        queue      = WORDS.filter(w => getCard(w[0]).reps === 0).slice(0, MAX_NEW);
+        initialLen = queue.length;
+        doneSeen   = new Set();
+        advance();
+      });
+    }
+  }
+
+  // ── Boot ──────────────────────────────────────────────────────
+  // Fisher-Yates shuffle — runs once on load so each user gets a unique order
+  for (let i = WORDS.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [WORDS[i], WORDS[j]] = [WORDS[j], WORDS[i]];
+  }
+  startSession();
+  </script>
+</body>
+</html>
