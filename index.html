@@ -56,7 +56,7 @@
     }
 
     .katakana-word {
-      font-size: 82px; /* initial; JS will shrink to fit */
+      font-size: 82px; /* fallback; overridden inline by fontSizeForLen() */
       letter-spacing: 6px;
       line-height: 1.15;
       /* Fill all available space between progress bar and input */
@@ -92,6 +92,7 @@
       margin-top: 8px;
       min-height: 16px;
     }
+    .ime-hint em { font-style: normal; color: #555; }
 
     .feedback {
       margin-top: 28px;
@@ -154,6 +155,7 @@
     .done h2 { font-size: 28px; margin-bottom: 14px; }
     .done p  { font-size: 14px; color: #555; margin-bottom: 6px; line-height: 1.7; }
   </style>
+  <script src="https://unpkg.com/wanakana@5/umd/wanakana.min.js"></script>
 </head>
 <body>
   <header>カタカナ Flashcards</header>
@@ -390,71 +392,109 @@
     ["マスター","masutaa","master"],
   ];
 
-  // ── SM-2 spaced repetition ────────────────────────────────────
-  // Stores per-card state in localStorage keyed by katakana string.
-  // Card state: { interval (days), reps, ef (ease factor), due (epoch ms) }
-  const PFX = 'kf_';
+  // ── Probability-based SRS (adapted from jconj by Bailey Snyder) ─
+  // Session-scoped: no persistence. Incorrect cards surface almost
+  // immediately; correct cards are deprioritised. All words stay in
+  // the pool forever — the session is open-ended.
 
-  function getCard(k) {
-    const d = localStorage.getItem(PFX + k);
-    return d ? JSON.parse(d) : { interval: 1, reps: 0, ef: 2.5, due: 0 };
-  }
-
-  function saveCard(k, d) {
-    localStorage.setItem(PFX + k, JSON.stringify(d));
-  }
-
-  // quality: 5 = correct, 1 = incorrect
-  function sm2(card, correct) {
-    const q = correct ? 5 : 1;
-    let { interval, reps, ef } = card;
-    if (q >= 3) {
-      if      (reps === 0) interval = 1;
-      else if (reps === 1) interval = 6;
-      else                 interval = Math.round(interval * ef);
-      reps++;
-    } else {
-      reps = 0;
-      interval = 1;
+  class Card {
+    constructor(word) {
+      this.word = word;   // [katakana, romaji, meaning]
+      this.probability = 0;
+      this.wasRecentlyIncorrect = false;
     }
-    ef = Math.max(1.3, ef + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02));
-    ef = Math.round(ef * 1000) / 1000;
-    return { interval, reps, ef, due: Date.now() + interval * 86400000 };
   }
 
-  // ── Session queue ─────────────────────────────────────────────
-  // Each session: all due reviews + up to MAX_NEW new cards.
-  const MAX_NEW = 20;
-
-  function buildQueue() {
-    const now = Date.now(), due = [], fresh = [];
-    for (const w of WORDS) {
-      const c = getCard(w[0]);
-      if (c.reps === 0)       fresh.push(w);
-      else if (c.due <= now)  due.push([w, c.due]);
+  class RecentlySeen {
+    constructor(card, wasCorrect) {
+      this.card = card;
+      this.wasCorrect = wasCorrect;
     }
-    due.sort((a, b) => a[1] - b[1]);
-    return [...due.map(d => d[0]), ...fresh.slice(0, MAX_NEW)];
+  }
+
+  function normalizeProbabilities(pool) {
+    let total = 0;
+    for (const c of pool) total += c.probability;
+    for (const c of pool) c.probability /= total;
+  }
+
+  function findMinProb(pool) {
+    let min = 2;
+    for (const c of pool)
+      if (c.probability !== 0 && c.probability < min) min = c.probability;
+    return min;
+  }
+
+  function equalizeProbabilities(pool) {
+    for (const c of pool) c.probability = 1;
+    normalizeProbabilities(pool);
+  }
+
+  function updateProbabilities(pool, recentQueue, currentCard, wasCorrect) {
+    const roundsToWait = 2;
+    if (pool.length < roundsToWait + 1) {
+      for (const c of pool) c.probability = 1;
+      currentCard.probability = 0;
+      normalizeProbabilities(pool);
+      return;
+    }
+    if (recentQueue.length >= roundsToWait) {
+      const dequeued = recentQueue.shift();
+      const minProb  = findMinProb(pool);
+      let newProb;
+      if (dequeued.wasCorrect && !dequeued.card.wasRecentlyIncorrect) {
+        newProb = minProb * 0.5;
+      } else if (dequeued.wasCorrect && dequeued.card.wasRecentlyIncorrect) {
+        newProb = minProb * 0.85;
+        dequeued.card.wasRecentlyIncorrect = false;
+      } else {
+        newProb = 10; // nearly guaranteed to appear next
+      }
+      dequeued.card.probability = newProb;
+    }
+    if (!wasCorrect) currentCard.wasRecentlyIncorrect = true;
+    recentQueue.push(new RecentlySeen(currentCard, wasCorrect));
+    currentCard.probability = 0;
+    normalizeProbabilities(pool);
+  }
+
+  function pickCard(pool) {
+    let r = Math.random();
+    for (const c of pool) {
+      if (r < c.probability) return c;
+      r -= c.probability;
+    }
+    return pool[0];
   }
 
   // ── App state ─────────────────────────────────────────────────
-  let queue, current, sessCorrect, sessTotal, initialLen, doneSeen, keyHandler;
+  let cardPool, recentQueue, sessCorrect, sessTotal, streak, keyBinding;
+
+  function clearKeyBinding() {
+    if (keyBinding) {
+      keyBinding.el.removeEventListener(keyBinding.event, keyBinding.fn);
+      keyBinding = null;
+    }
+  }
 
   function startSession() {
-    queue       = buildQueue();
-    initialLen  = queue.length;
-    doneSeen    = new Set();
+    cardPool    = WORDS.map(w => new Card(w));
+    recentQueue = [];
     sessCorrect = 0;
     sessTotal   = 0;
-    keyHandler  = null;
-    advance();
+    streak      = 0;
+    keyBinding  = null;
+    equalizeProbabilities(cardPool);
+
+    // ?word=タクシー — pin a specific card first (for testing)
+    const pin = new URLSearchParams(location.search).get('word');
+    const pinned = pin ? cardPool.find(c => c.word[0] === pin) : null;
+    renderQuestion(pinned || pickCard(cardPool));
   }
 
   function advance() {
-    if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null; }
-    if (queue.length === 0) { renderDone(); return; }
-    current = queue.shift();
-    renderQuestion();
+    clearKeyBinding();
+    renderQuestion(pickCard(cardPool));
   }
 
   // ── Accepted alternate spellings ─────────────────────────────
@@ -471,14 +511,13 @@
     return alts ? alts.includes(typed) : false;
   }
 
-  function submit(typed) {
-    if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null; }
-    const correct = isCorrect(typed, current[0]);
+  function submit(typed, card) {
+    clearKeyBinding();
+    const correct = isCorrect(typed, card.word[0]);
     sessTotal++;
-    if (correct) { sessCorrect++; doneSeen.add(current[0]); }
-    saveCard(current[0], sm2(getCard(current[0]), correct));
-    if (!correct) queue.push(current);  // re-queue within this session
-    renderFeedback(typed, correct);
+    if (correct) { sessCorrect++; streak++; } else { streak = 0; }
+    updateProbabilities(cardPool, recentQueue, card, correct);
+    renderFeedback(typed, correct, card);
   }
 
   // ── Render ────────────────────────────────────────────────────
@@ -489,51 +528,52 @@
   }
 
   function progressPct() {
-    return initialLen > 0 ? Math.min(100, doneSeen.size / initialLen * 100) : 0;
+    // Fill bar with accuracy so it gives useful visual feedback
+    return sessTotal > 0 ? Math.round(sessCorrect / sessTotal * 100) : 0;
   }
 
   function statsHTML() {
-    const rem = initialLen - doneSeen.size;
     const acc = sessTotal > 0 ? Math.round(sessCorrect / sessTotal * 100) + '%' : '—';
     return `
       <div class="stats">
-        <div><span class="stat-val">${rem}</span>remaining</div>
+        <div><span class="stat-val">${streak}</span>streak</div>
         <div><span class="stat-val">${sessCorrect}/${sessTotal}</span>correct</div>
         <div><span class="stat-val">${acc}</span>accuracy</div>
       </div>`;
   }
 
-  function fitText() {
-    const el = document.querySelector('.katakana-word');
-    if (!el) return;
-    el.style.fontSize = '82px';
-    while (el.scrollWidth > el.clientWidth && parseFloat(el.style.fontSize) > 16) {
-      el.style.fontSize = (parseFloat(el.style.fontSize) - 2) + 'px';
-    }
+  function fontSizeForLen(len) {
+    if (len <= 5) return '82px';
+    if (len <= 7) return '60px';
+    if (len <= 9) return '44px';
+    return '36px';
   }
 
-  function renderQuestion() {
+  function renderQuestion(card) {
     document.getElementById('app').innerHTML = `
       <div class="progress-bar">
         <div class="progress-fill" style="width:${progressPct()}%"></div>
       </div>
-      <div class="katakana-word">${esc(current[0])}</div>
+      <div class="katakana-word" style="font-size:${fontSizeForLen(card.word[0].length)}">${esc(card.word[0])}</div>
       <div class="feedback"></div>
-      <input id="answer-input" type="text" lang="ja"
+      <input id="answer-input" type="text"
              inputmode="text"
              autocomplete="off" autocorrect="off"
              autocapitalize="off" spellcheck="false"
-             placeholder="カタカナ…" />
-      <p class="ime-hint">Switch your IME to カタカナ mode, then type</p>
+             placeholder="romaji or カタカナ…" />
+      <p class="ime-hint">Type romaji (e.g. <em>ko-hi-</em>) or switch IME to カタカナ</p>
       <button class="next-btn" id="check-btn" disabled>Check ✓</button>
       ${statsHTML()}
     `;
     const inp = document.getElementById('answer-input');
     const btn = document.getElementById('check-btn');
 
+    // Convert romaji → katakana as the user types
+    wanakana.bind(inp, { IMEMode: 'toKatakana' });
+
     function trySubmit() {
       const val = inp.value.trim();
-      if (val) submit(val);
+      if (val) submit(val, card);
     }
 
     inp.addEventListener('input', () => {
@@ -542,27 +582,25 @@
 
     btn.addEventListener('click', trySubmit);
 
-    fitText();
     inp.focus();
-    keyHandler = e => {
-      if (e.key === 'Enter' && inp.value.trim()) trySubmit();
-    };
-    document.addEventListener('keydown', keyHandler);
+    const fn = e => { if (e.key === 'Enter' && inp.value.trim()) trySubmit(); };
+    inp.addEventListener('keyup', fn);
+    keyBinding = { el: inp, event: 'keyup', fn };
   }
 
-  function renderFeedback(typed, correct) {
+  function renderFeedback(typed, correct, card) {
     document.getElementById('app').innerHTML = `
       <div class="progress-bar">
         <div class="progress-fill" style="width:${progressPct()}%"></div>
       </div>
-      <div class="katakana-word">${esc(current[0])}</div>
+      <div class="katakana-word" style="font-size:${fontSizeForLen(card.word[0].length)}">${esc(card.word[0])}</div>
       <div class="feedback">
         <div class="verdict ${correct ? 'correct' : 'incorrect'}">
           ${correct ? '✓ Correct' : '✗ Incorrect'}
         </div>
-        ${!correct ? `<div class="correction">${esc(current[0])}</div>` : ''}
-        <div class="meaning">${esc(current[2])}</div>
-        <div class="romaji">${esc(current[1])}</div>
+        ${!correct ? `<div class="correction">${esc(card.word[0])}</div>` : ''}
+        <div class="meaning">${esc(card.word[2])}</div>
+        <div class="romaji">${esc(card.word[1])}</div>
       </div>
       <input id="answer-input" type="text"
              class="${correct ? 'correct' : 'incorrect'}"
@@ -573,73 +611,17 @@
     `;
     // Set value via JS property to avoid any injection risk
     document.getElementById('answer-input').value = typed;
-    fitText();
+    const fn = e => { if (e.key === 'Enter') advance(); };
+    document.addEventListener('keydown', fn);
+    keyBinding = { el: document, event: 'keydown', fn };
     const btn = document.getElementById('next-btn');
-    keyHandler = e => { if (e.key === 'Enter') advance(); };
-    document.addEventListener('keydown', keyHandler);
     // Delay click listener to avoid iOS ghost-click: the same touch that
     // triggered "Check" can fire a synthetic click on the newly rendered
     // "Next" button if it appears under the finger.
     setTimeout(() => btn.addEventListener('click', advance), 350);
   }
 
-  function renderDone() {
-    const acc = sessTotal ? Math.round(sessCorrect / sessTotal * 100) : 0;
-    let nextDue = Infinity;
-    for (const w of WORDS) {
-      const c = getCard(w[0]);
-      if (c.reps > 0 && c.due > Date.now()) nextDue = Math.min(nextDue, c.due);
-    }
-    const nextStr = nextDue === Infinity
-      ? 'none scheduled yet'
-      : new Date(nextDue).toLocaleString(undefined, {
-          weekday: 'short', month: 'short', day: 'numeric',
-          hour: '2-digit', minute: '2-digit'
-        });
-    const freshCount = WORDS.filter(w => getCard(w[0]).reps === 0).length;
-
-    document.getElementById('app').innerHTML = `
-      <div class="done">
-        <h2>Session complete</h2>
-        <p>${sessTotal} cards reviewed &middot; ${acc}% accuracy</p>
-        <p>Next review due: ${nextStr}</p>
-        ${freshCount > 0
-          ? `<button class="next-btn" id="more-btn" style="margin-top:20px">
-               Study ${Math.min(freshCount, MAX_NEW)} more new cards
-             </button>`
-          : `<p style="margin-top:16px;color:#333">All cards introduced — check back for reviews.</p>`
-        }
-      </div>
-    `;
-    const btn = document.getElementById('more-btn');
-    if (btn) {
-      btn.addEventListener('click', () => {
-        sessCorrect = 0; sessTotal = 0;
-        queue      = WORDS.filter(w => getCard(w[0]).reps === 0).slice(0, MAX_NEW);
-        initialLen = queue.length;
-        doneSeen   = new Set();
-        advance();
-      });
-    }
-  }
-
   // ── Boot ──────────────────────────────────────────────────────
-  // Fisher-Yates shuffle — runs once on load so each user gets a unique order
-  for (let i = WORDS.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [WORDS[i], WORDS[j]] = [WORDS[j], WORDS[i]];
-  }
-
-  // ?word=タクシー  — pin that card to the front for testing
-  const previewWord = new URLSearchParams(location.search).get('word');
-  if (previewWord) {
-    const idx = WORDS.findIndex(w => w[0] === previewWord);
-    if (idx !== -1) {
-      const [match] = WORDS.splice(idx, 1);
-      WORDS.unshift(match);
-    }
-  }
-
   startSession();
   </script>
 </body>
