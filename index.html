@@ -460,9 +460,23 @@
     renderQuestion();
   }
 
+  // ── Accepted alternate spellings ─────────────────────────────
+  // Keys are the canonical katakana (matching WORDS). Values are arrays of
+  // additional spellings that should be marked correct.
+  const ALIASES = {
+    "ウイルス": ["ウィルス"],
+    "ウイスキー": ["ウィスキー"],
+  };
+
+  function isCorrect(typed, canonical) {
+    if (typed === canonical) return true;
+    const alts = ALIASES[canonical];
+    return alts ? alts.includes(typed) : false;
+  }
+
   function submit(typed) {
     if (keyHandler) { document.removeEventListener('keydown', keyHandler); keyHandler = null; }
-    const correct = typed === current[0];
+    const correct = isCorrect(typed, current[0]);
     sessTotal++;
     if (correct) { sessCorrect++; doneSeen.add(current[0]); }
     saveCard(current[0], sm2(getCard(current[0]), correct));
