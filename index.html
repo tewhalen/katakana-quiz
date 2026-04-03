@@ -56,7 +56,7 @@
     }
 
     .katakana-word {
-      font-size: clamp(20px, 13vw, 82px);
+      font-size: 82px; /* initial; JS will shrink to fit */
       letter-spacing: 6px;
       line-height: 1.15;
       /* Fill all available space between progress bar and input */
@@ -64,11 +64,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      /* Scale down to fit long words on one line */
       white-space: nowrap;
-      overflow: hidden;
       width: 100%;
-      font-size: clamp(20px, calc(70vw / var(--char-count, 4)), 82px);
     }
 
     #answer-input {
@@ -506,12 +503,21 @@
       </div>`;
   }
 
+  function fitText() {
+    const el = document.querySelector('.katakana-word');
+    if (!el) return;
+    el.style.fontSize = '82px';
+    while (el.scrollWidth > el.clientWidth && parseFloat(el.style.fontSize) > 16) {
+      el.style.fontSize = (parseFloat(el.style.fontSize) - 2) + 'px';
+    }
+  }
+
   function renderQuestion() {
     document.getElementById('app').innerHTML = `
       <div class="progress-bar">
         <div class="progress-fill" style="width:${progressPct()}%"></div>
       </div>
-      <div class="katakana-word" style="--char-count:${current[0].length}">${esc(current[0])}</div>
+      <div class="katakana-word">${esc(current[0])}</div>
       <div class="feedback"></div>
       <input id="answer-input" type="text" lang="ja"
              inputmode="text"
@@ -536,6 +542,7 @@
 
     btn.addEventListener('click', trySubmit);
 
+    fitText();
     inp.focus();
     keyHandler = e => {
       if (e.key === 'Enter' && inp.value.trim()) trySubmit();
@@ -548,7 +555,7 @@
       <div class="progress-bar">
         <div class="progress-fill" style="width:${progressPct()}%"></div>
       </div>
-      <div class="katakana-word" style="--char-count:${current[0].length}">${esc(current[0])}</div>
+      <div class="katakana-word">${esc(current[0])}</div>
       <div class="feedback">
         <div class="verdict ${correct ? 'correct' : 'incorrect'}">
           ${correct ? '✓ Correct' : '✗ Incorrect'}
@@ -566,6 +573,7 @@
     `;
     // Set value via JS property to avoid any injection risk
     document.getElementById('answer-input').value = typed;
+    fitText();
     const btn = document.getElementById('next-btn');
     keyHandler = e => { if (e.key === 'Enter') advance(); };
     document.addEventListener('keydown', keyHandler);
@@ -621,6 +629,17 @@
     const j = Math.floor(Math.random() * (i + 1));
     [WORDS[i], WORDS[j]] = [WORDS[j], WORDS[i]];
   }
+
+  // ?word=タクシー  — pin that card to the front for testing
+  const previewWord = new URLSearchParams(location.search).get('word');
+  if (previewWord) {
+    const idx = WORDS.findIndex(w => w[0] === previewWord);
+    if (idx !== -1) {
+      const [match] = WORDS.splice(idx, 1);
+      WORDS.unshift(match);
+    }
+  }
+
   startSession();
   </script>
 </body>
