@@ -5,6 +5,52 @@ import re
 
 SMALL_KANA = set("ァィゥェォャュョッヮヵヶ")
 KATAKANA_RE = re.compile(r"^[\u30A0-\u30FF]+$")
+_MACRONS = [("aa", "ā"), ("ii", "ī"), ("uu", "ū"), ("ee", "ē"), ("oo", "ō")]
+_kks = None
+
+
+def _get_kakasi():
+    global _kks
+    if _kks is None:
+        import pykakasi
+        _kks = pykakasi.kakasi()
+    return _kks
+
+
+def to_romaji(word: str) -> str:
+    """Convert a katakana word to Hepburn romaji with macrons for long vowels."""
+    kks = _get_kakasi()
+    r = "".join(item["hepburn"] for item in kks.convert(word))
+    for double, macron in _MACRONS:
+        r = r.replace(double, macron)
+    return r
+
+
+def extract_katakana_words(freq_list_path: str) -> list[dict]:
+    """Read a tab-separated frequency list (rank, word, count) and return
+    rows for words that pass is_valid_katakana_word(), preserving rank order."""
+    rows = []
+    with open(freq_list_path, encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split("\t")
+            if len(parts) == 3 and is_valid_katakana_word(parts[1]):
+                rows.append({"rank": int(parts[0]), "word": parts[1], "frequency": int(parts[2])})
+    return rows
+
+
+def lookup_english(word: str, max_glosses: int = 5) -> str:
+    """Return a semicolon-separated string of English glosses for a katakana
+    word using JMdict via jamdict, or an empty string if no entry is found."""
+    from jamdict import Jamdict
+    jmd = Jamdict()
+    result = jmd.lookup(word)
+    glosses = []
+    for entry in result.entries:
+        for sense in entry.senses:
+            for g in sense.gloss:
+                if g.text not in glosses:
+                    glosses.append(g.text)
+    return "; ".join(glosses[:max_glosses])
 
 
 def is_valid_katakana_word(word: str) -> bool:
